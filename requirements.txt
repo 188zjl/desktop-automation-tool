@@ -1,0 +1,41 @@
+# Desktop Automation Tool Dependencies
+
+# Core Python libraries (usually included with Python)
+tkinter>=8.6  # GUI framework (note: usually built-in with Python)
+os  # Operating system interface (built-in)
+sys  # System-specific parameters and functions (built-in)
+subprocess  # Subprocess management (built-in)
+threading  # Thread-based parallelism (built-in)
+logging  # Logging facility (built-in)
+datetime  # Date and time handling (built-in)
+shutil  # High-level file operations (built-in)
+glob  # Unix style pathname pattern expansion (built-in)
+re  # Regular expression operations (built-in)
+
+# Archive handling libraries
+tarfile  # Read and write tar archive files (built-in)
+zipfile  # Work with ZIP archives (built-in)
+
+# Additional dependencies (if needed)
+# Note: Most functionality uses built-in Python libraries
+# External dependencies are minimal to ensure compatibility
+
+# Development and testing dependencies
+# pytest>=6.0.0  # Testing framework (uncomment if needed)
+# black>=21.0.0  # Code formatter (uncomment if needed)
+# flake8>=3.8.0  # Code linter (uncomment if needed)
+
+# External tools required (not Python packages):
+# - 7-Zip: Required for .7z and .rar file extraction
+#   Download from: https://www.7-zip.org/download.html
+#   Ensure 7z.exe is in system PATH or default installation directory
+
+# Platform-specific notes:
+# - Windows: All dependencies should work out of the box with Python 3.7+
+# - The tool is specifically designed for Windows environments
+# - tkinter is included with most Python installations on Windows
+
+# Installation notes:
+# Most dependencies are built-in Python modules
+# Run: pip install -r requirements.txt
+# However, most imports should work without additional installations
