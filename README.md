@@ -216,14 +216,3 @@ individual_outputs = {
 - [Python](https://www.python.org/) - 优秀的编程语言
 - [Tkinter](https://docs.python.org/3/library/tkinter.html) - GUI框架
 
-## 📞 联系方式
-
-如有问题或建议，请通过以下方式联系：
-
-- 📧 Email: your.email@example.com
-- 🐛 Issues: [GitHub Issues](https://github.com/yourusername/desktop-automation-tool/issues)
-- 💬 Discussions: [GitHub Discussions](https://github.com/yourusername/desktop-automation-tool/discussions)
-
----
-
-⭐ 如果这个项目对你有帮助，请给它一个星标！
