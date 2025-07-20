@@ -190,22 +190,6 @@ individual_outputs = {
 - 密码尝试记录
 - 提取文件列表
 
-## 🤝 贡献
-
-欢迎贡献代码！请遵循以下步骤：
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 打开 Pull Request
-
-### 开发指南
-- 遵循PEP 8代码规范
-- 添加适当的注释和文档
-- 编写测试用例
-- 更新README文档
-
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
