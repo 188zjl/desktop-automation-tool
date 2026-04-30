@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+.venv-build/
+build/
+dist/
+*.spec
+automation_log_*.log
+失败文件列表_*.txt
+*.tmp
