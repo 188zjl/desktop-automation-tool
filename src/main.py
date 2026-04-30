@@ -21,6 +21,14 @@ import subprocess
 import time
 from datetime import datetime
 
+APP_TITLE = "多重解压与 MP4 提取工具"
+WINDOW_PRESETS = {
+    "compact": (920, 640),
+    "standard": (1040, 760),
+    "wide": (1180, 820),
+}
+MIN_WINDOW_SIZE = (820, 600)
+
 # 尝试导入可选依赖库
 try:
     import rarfile
@@ -39,12 +47,11 @@ except ImportError:
 class DesktopAutomationTool:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("桌面自动化脚本 - 高级压缩包处理工具")
-        self.root.geometry("900x700")
-        self.root.resizable(True, True)
+        self.setup_window()
+        self.setup_style()
         
-        # 设置默认密码
-        self.default_password = "chinatkclub.com"
+        # 上传版不内置任何站点/个人密码；如遇加密压缩包，请在界面手动填写。
+        self.default_password = ""
         
         # 获取桌面路径
         self.desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -76,11 +83,80 @@ class DesktopAutomationTool:
             '.001': '.7z',  # 分卷压缩的第一部分通常是7z格式
             '.part1.rar': '.rar'
         }
+        self.seven_zip_path = self.find_7zip_executable()
+
+    def setup_window(self):
+        """设置主窗口：自适应屏幕、居中、提供最小尺寸。"""
+        self.root.title(APP_TITLE)
+        self.root.resizable(True, True)
+
+        screen_width = max(self.root.winfo_screenwidth(), 900)
+        screen_height = max(self.root.winfo_screenheight(), 700)
+        min_width = min(MIN_WINDOW_SIZE[0], max(720, screen_width - 80))
+        min_height = min(MIN_WINDOW_SIZE[1], max(520, screen_height - 100))
+        self.root.minsize(min_width, min_height)
+        self.set_window_preset("standard")
+
+    def setup_style(self):
+        """统一界面字体、间距和基础视觉风格。"""
+        self.font_family = "Microsoft YaHei UI" if sys.platform.startswith("win") else "Arial"
+        style = ttk.Style(self.root)
+
+        for theme in ("vista", "clam", "default"):
+            if theme in style.theme_names():
+                try:
+                    style.theme_use(theme)
+                    break
+                except tk.TclError:
+                    continue
+
+        style.configure(".", font=(self.font_family, 10))
+        style.configure("Title.TLabel", font=(self.font_family, 17, "bold"))
+        style.configure("Subtitle.TLabel", font=(self.font_family, 10), foreground="#555555")
+        style.configure("Hint.TLabel", font=(self.font_family, 9), foreground="#666666")
+        style.configure("Accent.TButton", font=(self.font_family, 10, "bold"))
+
+    def fit_window_size(self, width, height):
+        """把目标窗口尺寸限制在当前屏幕可见范围内。"""
+        screen_width = max(self.root.winfo_screenwidth(), 900)
+        screen_height = max(self.root.winfo_screenheight(), 700)
+        max_width = max(720, screen_width - 80)
+        max_height = max(520, screen_height - 100)
+        return min(width, max_width), min(height, max_height)
+
+    def center_window(self, window, width, height, min_width=None, min_height=None):
+        """将任意 Tk 窗口按指定尺寸居中显示。"""
+        width, height = self.fit_window_size(width, height)
+        screen_width = max(window.winfo_screenwidth(), 900)
+        screen_height = max(window.winfo_screenheight(), 700)
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+        window.geometry(f"{width}x{height}+{x}+{y}")
+
+        if min_width and min_height:
+            min_width = min(min_width, width)
+            min_height = min(min_height, height)
+            window.minsize(min_width, min_height)
+        window.resizable(True, True)
+
+    def set_window_preset(self, preset):
+        """一键调整主窗口尺寸，降低手动拖拽成本。"""
+        if preset == "max":
+            try:
+                self.root.state("zoomed")
+            except tk.TclError:
+                self.center_window(self.root, *WINDOW_PRESETS["wide"])
+            return
+
+        self.root.state("normal")
+        width, height = WINDOW_PRESETS.get(preset, WINDOW_PRESETS["standard"])
+        self.center_window(self.root, width, height)
         
     def setup_logging(self):
         """设置日志记录"""
         log_filename = f"automation_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         log_path = os.path.join(self.desktop_path, log_filename)
+        self.log_path = log_path
         
         logging.basicConfig(
             level=logging.INFO,
@@ -92,11 +168,107 @@ class DesktopAutomationTool:
         )
         self.logger = logging.getLogger(__name__)
         self.logger.info("桌面自动化脚本启动")
+
+    def find_7zip_executable(self):
+        """自动寻找 7-Zip，可增强 rar/7z/分卷包兼容性。"""
+        candidates = [
+            shutil.which("7z"),
+            shutil.which("7z.exe"),
+            os.path.join(os.environ.get("ProgramFiles", ""), "7-Zip", "7z.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", ""), "7-Zip", "7z.exe"),
+        ]
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                return candidate
+        return None
+
+    def detect_archive_type(self, file_path):
+        """按扩展名和文件头识别压缩包类型，尽量兼容改后缀/非标准后缀。"""
+        lower_path = file_path.lower()
+        if lower_path.endswith((".tar.gz", ".tgz")):
+            return "tar.gz"
+        if lower_path.endswith(".tar.bz2"):
+            return "tar.bz2"
+        if lower_path.endswith(".tar.xz"):
+            return "tar.xz"
+        if lower_path.endswith(".tar"):
+            return "tar"
+        if lower_path.endswith(".zip"):
+            return "zip"
+        if lower_path.endswith((".rar", ".part1.rar")):
+            return "rar"
+        if lower_path.endswith((".7z", ".666z", ".001")):
+            return "7z"
+
+        try:
+            with open(file_path, "rb") as f:
+                header = f.read(8)
+        except OSError:
+            return None
+
+        if header.startswith(b"PK"):
+            return "zip"
+        if header.startswith(b"Rar!"):
+            return "rar"
+        if header.startswith(b"7z\xbc\xaf\x27\x1c"):
+            return "7z"
+        if header.startswith(b"\x1f\x8b"):
+            return "tar.gz" if tarfile.is_tarfile(file_path) else "gz"
+        if tarfile.is_tarfile(file_path):
+            return "tar"
+        return None
+
+    def safe_extract_tar(self, tar_ref, extract_dir):
+        """防止 tar 路径穿越后再解压。"""
+        dest = os.path.abspath(extract_dir)
+        for member in tar_ref.getmembers():
+            target = os.path.abspath(os.path.join(dest, member.name))
+            if target != dest and not target.startswith(dest + os.sep):
+                raise ValueError(f"压缩包内包含不安全路径: {member.name}")
+        tar_ref.extractall(extract_dir)
+
+    def safe_extract_zip(self, zip_ref, extract_dir):
+        """防止 zip 路径穿越后再解压。"""
+        dest = os.path.abspath(extract_dir)
+        for member in zip_ref.namelist():
+            target = os.path.abspath(os.path.join(dest, member))
+            if target != dest and not target.startswith(dest + os.sep):
+                raise ValueError(f"压缩包内包含不安全路径: {member}")
+        zip_ref.extractall(extract_dir)
+
+    def extract_with_7zip_cli(self, archive_path, extract_dir, password=None):
+        """使用本机 7-Zip 解压，作为 py7zr/rarfile 的兼容兜底。"""
+        if not self.seven_zip_path:
+            raise ValueError("未检测到 7-Zip，请安装 7-Zip 或使用 py7zr/rarfile 支持的格式")
+
+        command = [
+            self.seven_zip_path,
+            "x",
+            "-y",
+            f"-o{extract_dir}",
+        ]
+        if password:
+            command.append(f"-p{password}")
+        command.append(archive_path)
+
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3600,
+        )
+        if result.returncode != 0:
+            output = (result.stderr or result.stdout or "7-Zip 解压失败").strip()
+            raise RuntimeError(output[-1000:])
+        return True
         
     def create_gui(self):
         """创建图形用户界面"""
         # 主框架
-        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame = ttk.Frame(self.root, padding="14")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # 配置网格权重
@@ -104,39 +276,71 @@ class DesktopAutomationTool:
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
         
-        # 标题
-        title_label = ttk.Label(main_frame, text="桌面自动化脚本 - 高级压缩包处理工具",
-                               font=('Arial', 16, 'bold'))
-        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        # 标题和窗口尺寸快捷按钮
+        header_frame = ttk.Frame(main_frame)
+        header_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 14))
+        header_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(header_frame, text=APP_TITLE, style="Title.TLabel").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(
+            header_frame,
+            text="批量选择压缩包 → 自动递归解压 → 汇总/独立输出 MP4",
+            style="Subtitle.TLabel"
+        ).grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
+
+        window_tools = ttk.Frame(header_frame)
+        window_tools.grid(row=0, column=1, rowspan=2, sticky=tk.E)
+        ttk.Label(window_tools, text="窗口:", style="Hint.TLabel").grid(row=0, column=0, padx=(0, 4))
+        ttk.Button(window_tools, text="紧凑", width=6,
+                   command=lambda: self.set_window_preset("compact")).grid(row=0, column=1, padx=2)
+        ttk.Button(window_tools, text="标准", width=6,
+                   command=lambda: self.set_window_preset("standard")).grid(row=0, column=2, padx=2)
+        ttk.Button(window_tools, text="宽屏", width=6,
+                   command=lambda: self.set_window_preset("wide")).grid(row=0, column=3, padx=2)
+        ttk.Button(window_tools, text="最大化", width=7,
+                   command=lambda: self.set_window_preset("max")).grid(row=0, column=4, padx=(2, 0))
         
         # 文件选择区域
         file_frame = ttk.LabelFrame(main_frame, text="文件选择", padding="10")
         file_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         file_frame.columnconfigure(1, weight=1)
+        file_frame.rowconfigure(0, weight=1)
         
         # 源文件选择
         ttk.Label(file_frame, text="源压缩包:").grid(row=0, column=0, sticky=tk.W, pady=5)
         
         # 创建文件列表框架
         files_frame = ttk.Frame(file_frame)
-        files_frame.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 5), pady=5)
+        files_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 5), pady=5)
         files_frame.columnconfigure(0, weight=1)
+        files_frame.rowconfigure(0, weight=1)
         
         # 文件列表显示
-        self.files_listbox = tk.Listbox(files_frame, height=5, selectmode=tk.EXTENDED)
+        self.files_listbox = tk.Listbox(files_frame, height=6, selectmode=tk.EXTENDED, activestyle="dotbox")
         files_scrollbar = ttk.Scrollbar(files_frame, orient=tk.VERTICAL, command=self.files_listbox.yview)
-        self.files_listbox.configure(yscrollcommand=files_scrollbar.set)
+        files_x_scrollbar = ttk.Scrollbar(files_frame, orient=tk.HORIZONTAL, command=self.files_listbox.xview)
+        self.files_listbox.configure(
+            yscrollcommand=files_scrollbar.set,
+            xscrollcommand=files_x_scrollbar.set
+        )
         
         self.files_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         files_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        files_x_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+
+        self.files_count_var = tk.StringVar(value="未选择文件")
+        ttk.Label(files_frame, textvariable=self.files_count_var, style="Hint.TLabel").grid(
+            row=2, column=0, columnspan=2, sticky=tk.W, pady=(4, 0)
+        )
         
         # 按钮框架
         button_frame = ttk.Frame(file_frame)
         button_frame.grid(row=0, column=2, pady=5)
         
-        ttk.Button(button_frame, text="添加文件", command=self.add_source_files).grid(row=0, column=0, pady=(0, 5))
-        ttk.Button(button_frame, text="清空列表", command=self.clear_source_files).grid(row=1, column=0, pady=(0, 5))
-        ttk.Button(button_frame, text="设置输出", command=self.configure_output_dirs).grid(row=2, column=0)
+        ttk.Button(button_frame, text="添加文件", command=self.add_source_files).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        ttk.Button(button_frame, text="移除选中", command=self.remove_selected_files).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        ttk.Button(button_frame, text="清空列表", command=self.clear_source_files).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        ttk.Button(button_frame, text="设置输出", command=self.configure_output_dirs).grid(row=3, column=0, sticky=(tk.W, tk.E))
         
         # 输出模式选择
         output_mode_frame = ttk.Frame(file_frame)
@@ -156,7 +360,7 @@ class DesktopAutomationTool:
         
         ttk.Label(self.output_dir_frame, text="基础输出目录:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.output_var = tk.StringVar(value=self.desktop_path)
-        ttk.Entry(self.output_dir_frame, textvariable=self.output_var, width=50).grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 5), pady=5)
+        ttk.Entry(self.output_dir_frame, textvariable=self.output_var, width=60).grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 5), pady=5)
         ttk.Button(self.output_dir_frame, text="浏览", command=self.select_output_dir).grid(row=0, column=2, pady=5)
         
         # 高级选项区域
@@ -190,7 +394,7 @@ class DesktopAutomationTool:
         ttk.Entry(password_frame, textvariable=self.password_var, show="*", width=25).grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 5), pady=2)
         
         ttk.Label(password_frame, text="备用密码:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.backup_passwords_var = tk.StringVar(value="123456,password,admin")
+        self.backup_passwords_var = tk.StringVar(value="")
         ttk.Entry(password_frame, textvariable=self.backup_passwords_var, width=25).grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(10, 5), pady=2)
         
         ttk.Label(password_frame, text="(多个密码用逗号分隔)", font=('Arial', 8)).grid(row=2, column=1, sticky=tk.W, padx=(10, 0))
@@ -199,11 +403,12 @@ class DesktopAutomationTool:
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=3, column=0, columnspan=3, pady=(0, 10))
         
-        self.start_button = ttk.Button(button_frame, text="开始处理", command=self.start_processing)
+        self.start_button = ttk.Button(button_frame, text="开始处理", command=self.start_processing, style="Accent.TButton")
         self.start_button.grid(row=0, column=0, padx=(0, 10))
         
         ttk.Button(button_frame, text="清空日志", command=self.clear_log).grid(row=0, column=1, padx=(0, 10))
-        ttk.Button(button_frame, text="退出", command=self.root.quit).grid(row=0, column=2)
+        ttk.Button(button_frame, text="打开输出目录", command=self.open_output_dir).grid(row=0, column=2, padx=(0, 10))
+        ttk.Button(button_frame, text="退出", command=self.root.quit).grid(row=0, column=3)
         
         # 进度条
         self.progress_var = tk.DoubleVar()
@@ -232,27 +437,54 @@ class DesktopAutomationTool:
     def add_source_files(self):
         """添加源压缩包文件"""
         filetypes = [
-            ("压缩包文件", "*.tar.gz;*.tgz;*.zip;*.rar;*.7z;*.666z"),
+            ("压缩包文件", "*.tar.gz;*.tgz;*.tar.bz2;*.tar.xz;*.zip;*.rar;*.part1.rar;*.7z;*.666z;*.001"),
             ("所有文件", "*.*")
         ]
         filenames = filedialog.askopenfilenames(
             title="选择压缩包文件（可多选）",
-            filetypes=filetypes
+            filetypes=filetypes,
+            initialdir=self.desktop_path
         )
         if filenames:
             for filename in filenames:
                 if filename not in self.source_files:
                     self.source_files.append(filename)
-                    self.files_listbox.insert(tk.END, os.path.basename(filename))
+                    self.files_listbox.insert(tk.END, filename)
                     self.log_message(f"已添加文件: {os.path.basename(filename)}")
             
             self.log_message(f"当前共选择了 {len(self.source_files)} 个文件")
+            self.update_file_count()
+    
+    def update_file_count(self):
+        """刷新文件数量提示。"""
+        count = len(self.source_files)
+        if count == 0:
+            self.files_count_var.set("未选择文件")
+        else:
+            self.files_count_var.set(f"已选择 {count} 个文件，可多选后点击“移除选中”")
+    
+    def remove_selected_files(self):
+        """从列表中移除选中的源文件。"""
+        selected_indices = list(self.files_listbox.curselection())
+        if not selected_indices:
+            messagebox.showinfo("提示", "请先在列表中选择要移除的文件")
+            return
+
+        for index in reversed(selected_indices):
+            source_file = self.source_files[index]
+            self.file_output_dirs.pop(source_file, None)
+            del self.source_files[index]
+            self.files_listbox.delete(index)
+
+        self.update_file_count()
+        self.log_message(f"已移除 {len(selected_indices)} 个文件")
     
     def clear_source_files(self):
         """清空源文件列表"""
         self.source_files.clear()
         self.file_output_dirs.clear()
         self.files_listbox.delete(0, tk.END)
+        self.update_file_count()
         self.log_message("已清空文件列表")
     
     def on_output_mode_change(self):
@@ -273,7 +505,7 @@ class DesktopAutomationTool:
         # 创建配置窗口
         config_window = tk.Toplevel(self.root)
         config_window.title("配置输出目录")
-        config_window.geometry("600x400")
+        self.center_window(config_window, 780, 520, 640, 420)
         config_window.transient(self.root)
         config_window.grab_set()
         
@@ -293,26 +525,28 @@ class DesktopAutomationTool:
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
         
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(canvas_window, width=event.width))
         
         # 为每个文件创建配置行
         self.output_entries = {}
         for i, source_file in enumerate(self.source_files):
             file_frame = ttk.Frame(scrollable_frame)
             file_frame.pack(fill=tk.X, pady=5)
+            file_frame.columnconfigure(1, weight=1)
             
             filename = os.path.basename(source_file)
-            ttk.Label(file_frame, text=f"{filename}:", width=30).pack(side=tk.LEFT)
+            ttk.Label(file_frame, text=f"{filename}:", width=30).grid(row=0, column=0, sticky=tk.W)
             
             # 获取当前设置的输出目录
             current_dir = self.file_output_dirs.get(source_file, self.output_dir)
             entry_var = tk.StringVar(value=current_dir)
             self.output_entries[source_file] = entry_var
             
-            ttk.Entry(file_frame, textvariable=entry_var, width=40).pack(side=tk.LEFT, padx=(5, 5))
+            ttk.Entry(file_frame, textvariable=entry_var).grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(8, 5))
             ttk.Button(file_frame, text="浏览",
-                      command=lambda sf=source_file: self.browse_individual_output(sf)).pack(side=tk.LEFT)
+                      command=lambda sf=source_file: self.browse_individual_output(sf)).grid(row=0, column=2)
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -347,7 +581,7 @@ class DesktopAutomationTool:
     def save_output_config(self, config_window):
         """保存输出目录配置"""
         for source_file, entry_var in self.output_entries.items():
-            self.file_output_dirs[source_file] = entry_var.get()
+            self.file_output_dirs[source_file] = entry_var.get().strip()
         
         self.log_message("已保存个性化输出目录配置")
         config_window.destroy()
@@ -362,6 +596,31 @@ class DesktopAutomationTool:
             self.output_var.set(directory)
             self.output_dir = directory
             self.log_message(f"已选择基础输出目录: {directory}")
+
+    def open_output_dir(self):
+        """打开当前输出目录，便于处理完成后直接查看结果。"""
+        target_dir = (
+            getattr(self, 'unified_output_dir', None)
+            or getattr(self, 'current_individual_output_dir', None)
+            or self.output_var.get().strip()
+            or self.output_dir
+        )
+
+        if not target_dir:
+            messagebox.showwarning("提示", "当前没有可打开的输出目录")
+            return
+
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            if sys.platform.startswith("win"):
+                os.startfile(target_dir)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", target_dir])
+            else:
+                subprocess.Popen(["xdg-open", target_dir])
+            self.log_message(f"已打开输出目录: {target_dir}")
+        except Exception as e:
+            messagebox.showerror("打开失败", f"无法打开输出目录:\n{target_dir}\n\n{str(e)}")
             
     def log_message(self, message):
         """在GUI中显示日志消息"""
@@ -391,6 +650,9 @@ class DesktopAutomationTool:
         if not self.source_files:
             messagebox.showerror("错误", "请至少选择一个压缩包文件！")
             return
+
+        self.output_mode = self.output_mode_var.get()
+        self.output_dir = self.output_var.get().strip()
             
         # 检查所有文件是否存在
         invalid_files = []
@@ -402,8 +664,14 @@ class DesktopAutomationTool:
             messagebox.showerror("错误", f"以下文件不存在或无法访问：\n" + "\n".join(invalid_files))
             return
             
-        if not self.output_dir or not os.path.exists(self.output_dir):
+        if not self.output_dir:
             messagebox.showerror("错误", "请选择有效的输出目录！")
+            return
+
+        try:
+            os.makedirs(self.output_dir, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror("错误", f"输出目录不可用：\n{self.output_dir}\n\n{str(e)}")
             return
             
         # 禁用开始按钮
@@ -526,32 +794,44 @@ class DesktopAutomationTool:
     def extract_single_archive(self, source_file):
         """解压单个压缩包"""
         self.log_message(f"开始解压: {os.path.basename(source_file)}")
-        
-        file_ext = Path(source_file).suffix.lower()
+        archive_type = self.detect_archive_type(source_file)
         
         try:
-            if file_ext == '.gz' and source_file.endswith('.tar.gz'):
-                # 处理.tar.gz文件
+            if archive_type == "tar.gz":
                 with tarfile.open(source_file, 'r:gz') as tar:
-                    tar.extractall(self.temp_dir)
+                    self.safe_extract_tar(tar, self.temp_dir)
                     self.log_message(f"tar.gz文件解压成功: {os.path.basename(source_file)}")
-            elif file_ext == '.zip':
-                # 处理.zip文件
+            elif archive_type == "tar.bz2":
+                with tarfile.open(source_file, 'r:bz2') as tar:
+                    self.safe_extract_tar(tar, self.temp_dir)
+                    self.log_message(f"tar.bz2文件解压成功: {os.path.basename(source_file)}")
+            elif archive_type == "tar.xz":
+                with tarfile.open(source_file, 'r:xz') as tar:
+                    self.safe_extract_tar(tar, self.temp_dir)
+                    self.log_message(f"tar.xz文件解压成功: {os.path.basename(source_file)}")
+            elif archive_type == "tar":
+                with tarfile.open(source_file, 'r') as tar:
+                    self.safe_extract_tar(tar, self.temp_dir)
+                    self.log_message(f"tar文件解压成功: {os.path.basename(source_file)}")
+            elif archive_type == "zip":
                 with zipfile.ZipFile(source_file, 'r') as zip_ref:
-                    zip_ref.extractall(self.temp_dir)
+                    self.safe_extract_zip(zip_ref, self.temp_dir)
                     self.log_message(f"zip文件解压成功: {os.path.basename(source_file)}")
-            elif file_ext == '.rar':
-                # 处理.rar文件
-                if not RARFILE_AVAILABLE:
-                    raise ValueError("RAR文件支持不可用，请安装rarfile库")
-                with rarfile.RarFile(source_file) as rar_ref:
-                    rar_ref.extractall(self.temp_dir)
-                    self.log_message(f"rar文件解压成功: {os.path.basename(source_file)}")
-            elif file_ext == '.7z':
-                # 处理.7z文件
+            elif archive_type == "rar":
+                try:
+                    if not RARFILE_AVAILABLE:
+                        raise ValueError("rarfile库不可用")
+                    with rarfile.RarFile(source_file) as rar_ref:
+                        rar_ref.extractall(self.temp_dir)
+                except Exception as rar_error:
+                    if not self.seven_zip_path:
+                        raise rar_error
+                    self.extract_with_7zip_cli(source_file, self.temp_dir)
+                self.log_message(f"rar文件解压成功: {os.path.basename(source_file)}")
+            elif archive_type == "7z":
                 self.extract_7z_file(source_file, self.temp_dir)
             else:
-                raise ValueError(f"不支持的文件格式: {file_ext}")
+                raise ValueError(f"不支持或无法识别的文件格式: {Path(source_file).suffix.lower()}")
                 
         except Exception as e:
             raise Exception(f"解压文件失败 {os.path.basename(source_file)}: {str(e)}")
@@ -581,8 +861,8 @@ class DesktopAutomationTool:
                 file_ext = Path(file).suffix.lower()
                 
                 # 扩展支持的格式
-                supported_extensions = ['.zip', '.rar', '.7z', '.tar.bz2', '.tar.xz', '.001']
-                if file_ext in supported_extensions or file.endswith('.tar.gz'):
+                supported_extensions = ['.zip', '.rar', '.7z', '.666z', '.001', '.tgz']
+                if file_ext in supported_extensions or file.lower().endswith(('.tar.gz', '.tar.bz2', '.tar.xz', '.part1.rar')):
                     archive_files.append(file_path)
                     
         self.log_message(f"发现 {len(archive_files)} 个内部压缩文件")
@@ -709,48 +989,58 @@ class DesktopAutomationTool:
         
     def extract_archive_file(self, archive_path, extract_dir):
         """解压单个压缩文件（增强版）"""
-        file_ext = Path(archive_path).suffix.lower()
         filename = os.path.basename(archive_path)
+        archive_type = self.detect_archive_type(archive_path)
         
         try:
-            if file_ext == '.zip':
+            if archive_type == "zip":
                 with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                    zip_ref.extractall(extract_dir)
+                    self.safe_extract_zip(zip_ref, extract_dir)
                 self.log_message(f"ZIP文件解压成功: {filename}")
                 return True
                 
-            elif file_ext == '.rar':
-                if not RARFILE_AVAILABLE:
-                    raise ValueError("RAR文件支持不可用，请安装rarfile库")
-                with rarfile.RarFile(archive_path) as rar_ref:
-                    rar_ref.extractall(extract_dir)
+            elif archive_type == "rar":
+                try:
+                    if not RARFILE_AVAILABLE:
+                        raise ValueError("rarfile库不可用")
+                    with rarfile.RarFile(archive_path) as rar_ref:
+                        rar_ref.extractall(extract_dir)
+                except Exception as rar_error:
+                    if not self.seven_zip_path:
+                        raise rar_error
+                    self.extract_with_7zip_cli(archive_path, extract_dir)
                 self.log_message(f"RAR文件解压成功: {filename}")
                 return True
                 
-            elif file_ext == '.7z' or file_ext == '.001':
-                # .001文件通常是7z分卷压缩的第一部分
+            elif archive_type == "7z":
                 return self.extract_7z_file(archive_path, extract_dir)
                 
-            elif archive_path.endswith('.tar.gz'):
+            elif archive_type == "tar.gz":
                 with tarfile.open(archive_path, 'r:gz') as tar:
-                    tar.extractall(extract_dir)
+                    self.safe_extract_tar(tar, extract_dir)
                 self.log_message(f"TAR.GZ文件解压成功: {filename}")
                 return True
                 
-            elif archive_path.endswith('.tar.bz2'):
+            elif archive_type == "tar.bz2":
                 with tarfile.open(archive_path, 'r:bz2') as tar:
-                    tar.extractall(extract_dir)
+                    self.safe_extract_tar(tar, extract_dir)
                 self.log_message(f"TAR.BZ2文件解压成功: {filename}")
                 return True
                 
-            elif archive_path.endswith('.tar.xz'):
+            elif archive_type == "tar.xz":
                 with tarfile.open(archive_path, 'r:xz') as tar:
-                    tar.extractall(extract_dir)
+                    self.safe_extract_tar(tar, extract_dir)
                 self.log_message(f"TAR.XZ文件解压成功: {filename}")
+                return True
+
+            elif archive_type == "tar":
+                with tarfile.open(archive_path, 'r') as tar:
+                    self.safe_extract_tar(tar, extract_dir)
+                self.log_message(f"TAR文件解压成功: {filename}")
                 return True
                 
             else:
-                raise ValueError(f"不支持的压缩格式: {file_ext}")
+                raise ValueError(f"不支持或无法识别的压缩格式: {Path(archive_path).suffix.lower()}")
                 
         except Exception as e:
             self.log_message(f"解压文件失败 {filename}: {str(e)}")
@@ -761,8 +1051,8 @@ class DesktopAutomationTool:
             
     def extract_7z_file(self, archive_path, extract_dir):
         """解压7z文件（增强密码支持和交互式处理）"""
-        if not PY7ZR_AVAILABLE:
-            raise ValueError("7z文件支持不可用，请安装py7zr库")
+        if not PY7ZR_AVAILABLE and not self.seven_zip_path:
+            raise ValueError("7z文件支持不可用，请安装 py7zr 或 7-Zip")
         
         # 准备密码列表
         passwords_to_try = []
@@ -780,33 +1070,43 @@ class DesktopAutomationTool:
                 if pwd and pwd not in passwords_to_try:
                     passwords_to_try.append(pwd)
         
-        # 添加常用密码
-        common_passwords = ["", "123456", "password", "admin", "123", "000000"]
-        for pwd in common_passwords:
-            if pwd not in passwords_to_try:
-                passwords_to_try.append(pwd)
+        # 上传版默认只尝试无密码 + 用户填写的密码，不内置任何站点/个人密码。
+        if "" not in passwords_to_try:
+            passwords_to_try.append("")
         
         # 尝试解压
         last_error = None
         for i, password in enumerate(passwords_to_try):
             try:
-                if password == "":
-                    # 无密码尝试
-                    with py7zr.SevenZipFile(archive_path, mode="r") as archive:
-                        archive.extractall(path=extract_dir)
-                        self.log_message(f"7z文件解压成功（无密码）: {os.path.basename(archive_path)}")
-                        return True
+                if PY7ZR_AVAILABLE:
+                    if password == "":
+                        # 无密码尝试
+                        with py7zr.SevenZipFile(archive_path, mode="r") as archive:
+                            archive.extractall(path=extract_dir)
+                    else:
+                        # 有密码尝试
+                        with py7zr.SevenZipFile(archive_path, mode="r", password=password) as archive:
+                            archive.extractall(path=extract_dir)
                 else:
-                    # 有密码尝试
-                    with py7zr.SevenZipFile(archive_path, mode="r", password=password) as archive:
-                        archive.extractall(path=extract_dir)
-                        self.log_message(f"7z文件解压成功（密码: {password}）: {os.path.basename(archive_path)}")
-                        return True
-                        
+                    self.extract_with_7zip_cli(archive_path, extract_dir, password or None)
+
+                password_label = "无密码" if password == "" else f"第 {i + 1} 个密码"
+                self.log_message(f"7z文件解压成功（{password_label}）: {os.path.basename(archive_path)}")
+                return True
+                         
             except Exception as e:
                 last_error = e
                 if i == 0:
-                    self.log_message(f"尝试密码 '{password}' 失败: {str(e)}")
+                    password_label = "无密码" if password == "" else "已填写密码"
+                    self.log_message(f"尝试{password_label}失败: {str(e)}")
+                if PY7ZR_AVAILABLE and self.seven_zip_path:
+                    try:
+                        self.extract_with_7zip_cli(archive_path, extract_dir, password or None)
+                        password_label = "无密码" if password == "" else f"第 {i + 1} 个密码"
+                        self.log_message(f"7z文件解压成功（7-Zip兜底，{password_label}）: {os.path.basename(archive_path)}")
+                        return True
+                    except Exception as cli_error:
+                        last_error = cli_error
                 continue
         
         # 所有密码都失败了
@@ -830,7 +1130,7 @@ class DesktopAutomationTool:
         # 创建失败处理对话框
         failure_dialog = tk.Toplevel(self.root)
         failure_dialog.title(f"解压失败 - {filename}")
-        failure_dialog.geometry("500x300")
+        self.center_window(failure_dialog, 540, 320, 480, 280)
         failure_dialog.transient(self.root)
         failure_dialog.grab_set()
         
@@ -1128,7 +1428,7 @@ class DesktopAutomationTool:
         # 创建失败文件处理对话框
         failure_dialog = tk.Toplevel(self.root)
         failure_dialog.title("处理失败的文件")
-        failure_dialog.geometry("700x500")
+        self.center_window(failure_dialog, 760, 520, 640, 420)
         failure_dialog.transient(self.root)
         failure_dialog.grab_set()
         
